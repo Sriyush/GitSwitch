@@ -18,18 +18,30 @@ import (
 // core.hooksPath globally otherwise shadows every repo's local hooks, which
 // would silently disable things like husky or lint gates — an unacceptable side
 // effect for a tool that is supposed to prevent surprises.
-const script = `#!/bin/sh
+// scriptTemplate is the installed pre-push hook. %s is the absolute path to the
+// gsw binary, baked in at install time.
+//
+// The absolute path is not a nicety. Git runs hooks in a non-interactive shell
+// whose PATH comes from the login environment, not from .zshrc or .bashrc — so
+// a binary in ~/.local/bin is typically invisible. Invoking bare `gsw` there
+// silently finds nothing and the guard becomes a no-op that reports success,
+// which is the worst possible failure mode for a safety check.
+const scriptTemplate = `#!/bin/sh
 # Installed by gitswitch. Remove with: gsw hook uninstall
-if [ -z "$GSW_SKIP_GUARD" ]; then
-	if command -v gsw >/dev/null 2>&1; then
-		gsw check-push "$@" </dev/null || exit 1
-	fi
+GSW=%q
+
+if [ -z "$GSW_SKIP_GUARD" ] && [ -x "$GSW" ]; then
+	"$GSW" check-push "$@" </dev/null || exit 1
 fi
 
-# Chain to the repository's own pre-push hook, if it has one.
-own=$(git rev-parse --git-path hooks/pre-push 2>/dev/null)
-if [ -n "$own" ] && [ -x "$own" ]; then
-	exec "$own" "$@"
+# Chain to the repository's own hook, if it has one.
+#
+# This must not use "git rev-parse --git-path hooks/pre-push": that resolves
+# through core.hooksPath, which points back at this very file, and exec'ing it
+# would loop forever. The literal .git/hooks path is the only correct source.
+gitdir=$(git rev-parse --absolute-git-dir 2>/dev/null)
+if [ -n "$gitdir" ] && [ -x "$gitdir/hooks/pre-push" ]; then
+	exec "$gitdir/hooks/pre-push" "$@"
 fi
 exit 0
 `
@@ -52,7 +64,16 @@ func Install() (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("locating the gsw binary: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(self); err == nil {
+		self = resolved
+	}
+
 	path := filepath.Join(dir, "pre-push")
+	script := fmt.Sprintf(scriptTemplate, self)
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		return "", err
 	}

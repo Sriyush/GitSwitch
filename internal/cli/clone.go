@@ -109,14 +109,31 @@ func cmdClone(args []string) error {
 	return nil
 }
 
-// splitRepo accepts owner/repo and tolerates a full GitHub URL, since that is
-// what people actually have on the clipboard.
+// splitRepo accepts owner/repo and tolerates a full URL in either form, since
+// that is what people actually have on the clipboard.
+//
+// It must handle host aliases such as git@github.com-work:owner/repo.git, which
+// is the form gitswitch itself writes into remotes. Matching on the literal
+// "github.com" and skipping past it does not work: the alias suffix runs on into
+// the owner and yields nonsense like "-work:owner". Splitting on the URL's own
+// structure is the only approach that survives aliases.
 func splitRepo(s string) (owner, repo string, ok bool) {
-	s = strings.TrimSuffix(s, ".git")
-	if i := strings.Index(s, "github.com"); i >= 0 {
-		s = s[i+len("github.com"):]
-		s = strings.TrimLeft(s, ":/")
+	s = strings.TrimSuffix(strings.TrimSpace(s), ".git")
+
+	switch {
+	case strings.Contains(s, "://"):
+		// https://host/owner/repo or ssh://git@host/owner/repo
+		rest := s[strings.Index(s, "://")+3:]
+		j := strings.Index(rest, "/")
+		if j < 0 {
+			return "", "", false
+		}
+		s = rest[j+1:]
+	case strings.Contains(s, ":"):
+		// scp-like: [user@]host:owner/repo, where host may be an alias
+		s = s[strings.LastIndex(s, ":")+1:]
 	}
+
 	parts := strings.Split(strings.Trim(s, "/"), "/")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", false
