@@ -14,21 +14,24 @@ type command struct {
 	name    string
 	summary string
 	run     func(args []string) error
+	hidden  bool // invoked by machinery, not by people; kept out of help
 }
 
 func commands() []command {
 	return []command{
-		{"add", "Register a new GitHub account profile", cmdAdd},
-		{"list", "List all profiles", cmdList},
-		{"edit", "Change fields on an existing profile", cmdEdit},
-		{"key", "Show a profile's public key and how to add it to GitHub", cmdKey},
-		{"switch", "Make a profile the active identity", cmdSwitch},
-		{"status", "Show the active profile and the identity in this directory", cmdStatus},
-		{"remove", "Delete a profile", cmdRemove},
-		{"clone", "Clone a repo using the profile that owns it", cmdClone},
-		{"doctor", "Diagnose SSH, token, signing, and config problems", cmdDoctor},
-		{"ui", "Start the local management server and open the web UI", cmdUI},
-		{"restore", "Remove all gitswitch-managed config blocks", cmdRestore},
+		{name: "add", summary: "Register a new GitHub account profile", run: cmdAdd},
+		{name: "list", summary: "List all profiles", run: cmdList},
+		{name: "edit", summary: "Change fields on an existing profile", run: cmdEdit},
+		{name: "key", summary: "Show a profile's public key and how to add it to GitHub", run: cmdKey},
+		{name: "switch", summary: "Make a profile the active identity", run: cmdSwitch},
+		{name: "status", summary: "Show the active profile and the identity in this directory", run: cmdStatus},
+		{name: "remove", summary: "Delete a profile", run: cmdRemove},
+		{name: "clone", summary: "Clone a repo using the profile that owns it", run: cmdClone},
+		{name: "doctor", summary: "Diagnose SSH, token, signing, and config problems", run: cmdDoctor},
+		{name: "hook", summary: "Install the pre-push guard against wrong-identity pushes", run: cmdHook},
+		{name: "ui", summary: "Start the local management server and open the web UI", run: cmdUI},
+		{name: "restore", summary: "Remove all gitswitch-managed config blocks", run: cmdRestore},
+		{name: "check-push", run: cmdCheckPush, hidden: true},
 	}
 }
 
@@ -109,7 +112,9 @@ func usage(version string) {
 	fmt.Println()
 	fmt.Println("COMMANDS")
 	for _, c := range commands() {
-		fmt.Printf("  %-9s %s\n", c.name, c.summary)
+		if !c.hidden {
+			fmt.Printf("  %-9s %s\n", c.name, c.summary)
+		}
 	}
 	fmt.Println()
 	fmt.Println("Run `gsw <command> -h` for command-specific flags.")
