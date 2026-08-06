@@ -1,0 +1,18 @@
+bin/
+dist/
+*.gsw-backup
+
+# Frontend
+node_modules/
+web/dist/
+web/.vite/
+*.local
+
+# Never commit anything that could carry a token
+*.env
+.env*
+profiles.json
+
+.DS_Store
+.idea/
+.vscode/
