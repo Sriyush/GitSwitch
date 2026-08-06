@@ -30,6 +30,7 @@ Early. Working today:
 - `gsw switch` — change the active identity (also `gsw <profile>`)
 - `gsw status` — active profile, plus the effective identity in this directory
 - `gsw clone` — clone via the owning profile and pin identity into the new repo
+- `gsw hook` — install a pre-push guard that blocks wrong-identity pushes
 - `gsw remove`, `gsw restore`
 - `gsw doctor` — local checks only; network and keyring checks report as skipped
 
@@ -81,6 +82,38 @@ gets an `includeIf` rule in `~/.gitconfig`:
 Git applies includes in order and later ones win, so inside `~/work` the work
 identity overrides whatever is globally active. No daemon, no hook — git does it.
 
+## Pre-push guard
+
+Directory scoping prevents mistakes; the guard catches the ones that slip past.
+
+```bash
+gsw hook install
+```
+
+It blocks a push when a profile claims the repo's owner but you are committing
+as someone else:
+
+```
+gitswitch: blocked push to Sriyush/GitSwitch
+
+  This repo belongs to sriyush (Sriyush)
+  You are committing as mahbrew (MahBrewski) <...@users.noreply.github.com>
+
+  Fix:    gsw switch sriyush
+  Or:     gsw edit mahbrew --orgs Sriyush   (if mahbrew really owns it)
+  Bypass: GSW_SKIP_GUARD=1 git push
+```
+
+The check runs before git contacts the remote, and only fires when it is
+confident: a profile must explicitly claim the owner via `--orgs` or a matching
+username. Anything ambiguous is allowed, because a guard that cries wolf gets
+uninstalled.
+
+Installation sets `core.hooksPath`, which normally shadows every repo's local
+hooks. The installed hook chains to `.git/hooks/pre-push` when one exists, so
+husky and similar keep working. It refuses to install if `core.hooksPath` is
+already set to something else.
+
 ## Safety
 
 - Every edit to `~/.gitconfig` is fenced by `# >>> gitswitch managed >>>` markers.
@@ -97,9 +130,10 @@ identity overrides whatever is globally active. No daemon, no hook — git does 
 cmd/gsw/            entry point
 internal/profile/   profile model + store — single source of truth
 internal/gitcfg/    marker-fenced config editing + rendering
-internal/sshcfg/    ~/.ssh/config + agent          (planned)
+internal/sshcfg/    ~/.ssh/config, keygen, handshake verify
+internal/hook/      pre-push guard
 internal/keyring/   OS credential store            (planned)
-internal/github/    REST API + OAuth device flow   (planned)
+internal/github/    REST API                       (planned)
 internal/server/    localhost API behind `gsw ui`  (planned)
 web/                React + Vite frontend          (planned)
 ```
