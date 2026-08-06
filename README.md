@@ -129,3 +129,4 @@ HOME=$(mktemp -d) ./bin/gsw add test --username me --email me@example.com
 ```
 
 <!-- push test -->
+<!-- mahbrew access test -->
