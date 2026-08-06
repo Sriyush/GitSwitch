@@ -25,15 +25,16 @@ Early. Working today:
 
 - `gsw add` — register a profile
 - `gsw list` — list profiles, active one marked
+- `gsw edit` — change fields; only flags you pass are touched, `--root ""` clears
 - `gsw switch` — change the active identity (also `gsw <profile>`)
 - `gsw status` — active profile, plus the effective identity in this directory
 - `gsw clone` — clone via the owning profile and pin identity into the new repo
 - `gsw remove`, `gsw restore`
 - `gsw doctor` — local checks only; network and keyring checks report as skipped
 
-Not built yet: `internal/sshcfg`, `internal/keyring`, `internal/github`,
-`internal/server`, and the web UI. Each package has a `doc.go` describing its
-intended surface.
+`internal/sshcfg` writes host aliases and verifies handshakes against GitHub.
+Not built yet: `internal/keyring`, `internal/github`, `internal/server`, and the
+web UI. Each carries a `doc.go` describing its intended surface.
 
 ## Install
 

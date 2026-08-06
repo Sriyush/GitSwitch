@@ -83,7 +83,7 @@ func cmdAdd(args []string) error {
 	if err := store.Save(); err != nil {
 		return err
 	}
-	if err := apply(store); err != nil {
+	if err := applyStore(store); err != nil {
 		return err
 	}
 
@@ -135,7 +135,7 @@ func cmdSwitch(args []string) error {
 	if err := store.Save(); err != nil {
 		return err
 	}
-	if err := apply(store); err != nil {
+	if err := applyStore(store); err != nil {
 		return err
 	}
 	fmt.Printf("Switched to %s (%s <%s>)\n", p.Name, p.Username, p.GitEmail)
@@ -188,7 +188,7 @@ func cmdRemove(args []string) error {
 	if err := store.Save(); err != nil {
 		return err
 	}
-	if err := apply(store); err != nil {
+	if err := applyStore(store); err != nil {
 		return err
 	}
 	fmt.Printf("Removed profile %q\n", args[0])
@@ -211,7 +211,7 @@ func cmdRestore(args []string) error {
 
 // apply rewrites every managed config region from the current store. It is
 // called after any mutation so disk state always matches the store.
-func apply(store *profile.Store) error {
+func applyStore(store *profile.Store) error {
 	dir, err := profile.ConfigDir()
 	if err != nil {
 		return err
