@@ -127,6 +127,3 @@ Test against a throwaway `HOME` so your real `~/.gitconfig` is never touched:
 ```bash
 HOME=$(mktemp -d) ./bin/gsw add test --username me --email me@example.com
 ```
-
-<!-- push test -->
-<!-- mahbrew access test -->
