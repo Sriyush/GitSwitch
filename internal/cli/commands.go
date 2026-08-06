@@ -19,7 +19,8 @@ func cmdAdd(args []string) error {
 		username = fs.String("username", "", "GitHub login (required)")
 		gitName  = fs.String("name", "", "value for user.name (defaults to --username)")
 		email    = fs.String("email", "", "value for user.email (required)")
-		sshKey   = fs.String("ssh-key", "", "path to the private SSH key for this account")
+		sshKey   = fs.String("ssh-key", "", "use an existing private key instead of generating one")
+		noKey    = fs.Bool("no-key", false, "skip SSH key setup entirely")
 		signKey  = fs.String("signing-key", "", "SSH public key or GPG key id for commit signing")
 		signFmt  = fs.String("signing-format", "ssh", `"ssh" or "openpgp"`)
 		root     = fs.String("root", "", "directory this profile owns; repos under it always use this identity")
@@ -53,12 +54,27 @@ func cmdAdd(args []string) error {
 		*signFmt = ""
 	}
 
+	// Every account needs its own key, since GitHub refuses a public key that is
+	// already registered elsewhere. Generating one by default removes the most
+	// tedious part of adding an account.
+	keyPath := expand(*sshKey)
+	generated := false
+	if keyPath == "" && !*noKey {
+		var err error
+		if keyPath, err = sshcfg.DefaultKeyPath(name); err != nil {
+			return err
+		}
+		if generated, err = sshcfg.GenerateKey(keyPath, "gitswitch-"+*username); err != nil {
+			return err
+		}
+	}
+
 	p := &profile.Profile{
 		Name:          name,
 		Username:      *username,
 		GitName:       *gitName,
 		GitEmail:      *email,
-		SSHKey:        expand(*sshKey),
+		SSHKey:        keyPath,
 		SigningKey:    expand(*signKey),
 		SigningFormat: *signFmt,
 		Root:          expand(*root),
@@ -91,8 +107,65 @@ func cmdAdd(args []string) error {
 	if p.Root != "" {
 		fmt.Printf("  Repos under %s will always use this identity.\n", p.Root)
 	}
-	fmt.Printf("\nNext: store the token with `gsw token %s` and verify with `gsw doctor`.\n", p.Name)
+	if generated {
+		fmt.Printf("  Generated a new SSH key at %s\n", p.SSHKey)
+	} else if p.SSHKey != "" {
+		fmt.Printf("  Using SSH key %s\n", p.SSHKey)
+	}
+	if p.SSHKey != "" {
+		fmt.Println()
+		return showKey(p)
+	}
 	return nil
+}
+
+// showKey prints the public key and what to do with it. GitHub will not accept
+// a key already registered to another account, so this step cannot be shared
+// between profiles and has to be done once per account.
+func showKey(p *profile.Profile) error {
+	if p.SSHKey == "" {
+		return fmt.Errorf("profile %q has no SSH key; set one with `gsw edit %s --ssh-key <path>`", p.Name, p.Name)
+	}
+	pub, err := sshcfg.PublicKey(p.SSHKey)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("Add this public key to GitHub to finish setup:")
+	fmt.Println()
+	fmt.Printf("  %s\n", pub)
+	fmt.Println()
+	if sshcfg.Clipboard(pub) {
+		fmt.Println("  (copied to clipboard)")
+	}
+	fmt.Printf("  1. Sign in to GitHub as %s\n", p.Username)
+	fmt.Println("  2. Open https://github.com/settings/ssh/new")
+	fmt.Println("  3. Paste the key, leave the type as \"Authentication Key\", and save")
+	fmt.Printf("\nThen verify with: gsw doctor\n")
+	return nil
+}
+
+func cmdKey(args []string) error {
+	store, err := profile.Load()
+	if err != nil {
+		return err
+	}
+
+	var p *profile.Profile
+	switch len(args) {
+	case 0:
+		var ok bool
+		if p, ok = store.ActiveProfile(); !ok {
+			return fmt.Errorf("no active profile; usage: gsw key <profile>")
+		}
+	case 1:
+		if p, err = store.Get(args[0]); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("usage: gsw key [profile]")
+	}
+	return showKey(p)
 }
 
 func cmdList(args []string) error {

@@ -23,7 +23,8 @@ gitswitch changes all four together, or none.
 
 Early. Working today:
 
-- `gsw add` — register a profile
+- `gsw add` — register a profile, generating an SSH key and printing it to add
+- `gsw key` — re-print a profile's public key and the steps to register it
 - `gsw list` — list profiles, active one marked
 - `gsw edit` — change fields; only flags you pass are touched, `--root ""` clears
 - `gsw switch` — change the active identity (also `gsw <profile>`)
@@ -32,9 +33,14 @@ Early. Working today:
 - `gsw remove`, `gsw restore`
 - `gsw doctor` — local checks only; network and keyring checks report as skipped
 
-`internal/sshcfg` writes host aliases and verifies handshakes against GitHub.
-Not built yet: `internal/keyring`, `internal/github`, `internal/server`, and the
-web UI. Each carries a `doc.go` describing its intended surface.
+`internal/sshcfg` writes host aliases, generates keys, and verifies handshakes
+against GitHub. Not built yet: `internal/keyring` (HTTPS tokens), `internal/github`
+(REST API), `internal/server`, and the web UI. Each carries a `doc.go` describing
+its intended surface.
+
+SSH is the supported path today. Key setup is deliberately manual — `gsw add`
+generates the keypair and hands you the public key to paste, which avoids
+requiring a registered OAuth app just to add an account.
 
 ## Install
 
@@ -49,8 +55,11 @@ make install      # builds to ./bin/gsw, installs to ~/.local/bin
 ## Use
 
 ```bash
+# Generates an SSH key and prints it for you to add at github.com/settings/ssh/new
 gsw add personal --username sriyush  --email you@personal.com  --root ~/personal
 gsw add work     --username you-acme --email you@acme.com --root ~/work --orgs acme
+gsw key work                  # show that key again later
+gsw add ci --ssh-key ~/.ssh/existing_key --username you --email you@x.com
 
 gsw switch work
 gsw work                      # same thing

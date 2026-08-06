@@ -21,6 +21,7 @@ func commands() []command {
 		{"add", "Register a new GitHub account profile", cmdAdd},
 		{"list", "List all profiles", cmdList},
 		{"edit", "Change fields on an existing profile", cmdEdit},
+		{"key", "Show a profile's public key and how to add it to GitHub", cmdKey},
 		{"switch", "Make a profile the active identity", cmdSwitch},
 		{"status", "Show the active profile and the identity in this directory", cmdStatus},
 		{"remove", "Delete a profile", cmdRemove},
