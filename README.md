@@ -1,4 +1,4 @@
-# gitswitch
+# gitswitch - Need of the Hour (Atleast for me)
 
 Switch your primary GitHub account — and everything git actually authenticates with.
 
