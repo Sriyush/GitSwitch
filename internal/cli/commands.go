@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/sriyush/gitswitch/internal/apply"
 	"github.com/sriyush/gitswitch/internal/gitcfg"
+	"github.com/sriyush/gitswitch/internal/hook"
 	"github.com/sriyush/gitswitch/internal/profile"
 	"github.com/sriyush/gitswitch/internal/sshcfg"
 )
@@ -57,7 +59,7 @@ func cmdAdd(args []string) error {
 	// Every account needs its own key, since GitHub refuses a public key that is
 	// already registered elsewhere. Generating one by default removes the most
 	// tedious part of adding an account.
-	keyPath := expand(*sshKey)
+	keyPath := profile.ExpandPath(*sshKey)
 	generated := false
 	if keyPath == "" && !*noKey {
 		var err error
@@ -75,9 +77,9 @@ func cmdAdd(args []string) error {
 		GitName:       *gitName,
 		GitEmail:      *email,
 		SSHKey:        keyPath,
-		SigningKey:    expand(*signKey),
+		SigningKey:    profile.ExpandPath(*signKey),
 		SigningFormat: *signFmt,
-		Root:          expand(*root),
+		Root:          profile.ExpandPath(*root),
 		TokenRef:      "keyring://gitswitch/" + name,
 	}
 	p.HostAlias = p.DefaultHostAlias()
@@ -93,13 +95,16 @@ func cmdAdd(args []string) error {
 	if err != nil {
 		return err
 	}
+	if err := store.CheckRoot(p.Name, p.Root); err != nil {
+		return err
+	}
 	if err := store.Add(p); err != nil {
 		return err
 	}
 	if err := store.Save(); err != nil {
 		return err
 	}
-	if err := applyStore(store); err != nil {
+	if err := apply.Store(store); err != nil {
 		return err
 	}
 
@@ -208,7 +213,7 @@ func cmdSwitch(args []string) error {
 	if err := store.Save(); err != nil {
 		return err
 	}
-	if err := applyStore(store); err != nil {
+	if err := apply.Store(store); err != nil {
 		return err
 	}
 	fmt.Printf("Switched to %s (%s <%s>)\n", p.Name, p.Username, p.GitEmail)
@@ -255,102 +260,93 @@ func cmdRemove(args []string) error {
 	if err != nil {
 		return err
 	}
+	removed, err := store.Get(args[0])
+	if err != nil {
+		return err
+	}
 	if err := store.Remove(args[0]); err != nil {
 		return err
 	}
 	if err := store.Save(); err != nil {
 		return err
 	}
-	if err := applyStore(store); err != nil {
+	if err := apply.Store(store); err != nil {
 		return err
 	}
 	fmt.Printf("Removed profile %q\n", args[0])
+
+	// Key material is deliberately never deleted here: an SSH key may be
+	// registered on GitHub, referenced by another tool, or simply irreplaceable,
+	// and removing one by surprise is far worse than leaving a stale file. Say so
+	// rather than leaving the user to discover it.
+	if removed != nil && removed.SSHKey != "" {
+		fmt.Printf("  The SSH key at %s was kept. Delete it yourself if you no longer want it.\n", removed.SSHKey)
+	}
 	return nil
 }
 
+// cmdRestore returns the machine to its pre-gitswitch state.
+//
+// It clears every managed region, not just the gitconfig block. Clearing one of
+// three left the machine in a state it had never been in: no identity
+// configured, but host aliases still resolving and a guard still running.
 func cmdRestore(args []string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(home, ".gitconfig")
-	if err := gitcfg.RemoveBlock(path); err != nil {
-		return err
-	}
-	fmt.Printf("Removed the gitswitch block from %s\n", path)
-	fmt.Printf("A backup of the previous contents is at %s.gsw-backup\n", path)
-	return nil
-}
 
-// apply rewrites every managed config region from the current store. It is
-// called after any mutation so disk state always matches the store.
-func applyStore(store *profile.Store) error {
-	dir, err := profile.ConfigDir()
+	// Each region is reported only if it was actually there. A restore that
+	// announces removals it did not perform teaches the user to distrust the
+	// output, which matters more here than anywhere else: this is the command
+	// people run when they want to be sure nothing of ours is left behind.
+	gitconfigPath := filepath.Join(home, ".gitconfig")
+	_, had, err := gitcfg.Block(gitconfigPath)
 	if err != nil {
 		return err
 	}
-	fragDir := filepath.Join(dir, "profiles")
-	if err := os.MkdirAll(fragDir, 0o700); err != nil {
+	if err := gitcfg.RemoveBlock(gitconfigPath); err != nil {
 		return err
 	}
+	if had {
+		fmt.Printf("Removed the gitswitch block from %s\n", gitconfigPath)
+		fmt.Printf("  A backup of the previous contents is at %s.gsw-backup\n", gitconfigPath)
+	} else {
+		fmt.Printf("No gitswitch block in %s\n", gitconfigPath)
+	}
 
-	var all []gitcfg.Identity
-	var active *gitcfg.Identity
-	for _, p := range store.List() {
-		id := gitcfg.Identity{
-			Name:          p.Name,
-			GitName:       p.GitName,
-			GitEmail:      p.GitEmail,
-			SigningKey:    p.SigningKey,
-			SigningFormat: p.SigningFormat,
-			Root:          p.Root,
-			FragmentPath:  filepath.Join(fragDir, p.Name+".gitconfig"),
-		}
-		if err := os.WriteFile(id.FragmentPath, []byte(gitcfg.Fragment(id)), 0o600); err != nil {
+	sshPath, err := sshcfg.Path()
+	if err != nil {
+		return err
+	}
+	_, hadSSH, err := gitcfg.Block(sshPath)
+	if err != nil {
+		return err
+	}
+	if err := sshcfg.Apply(nil); err != nil {
+		return fmt.Errorf("clearing %s: %w", sshPath, err)
+	}
+	if hadSSH {
+		fmt.Printf("Removed the gitswitch block from %s\n", sshPath)
+	} else {
+		fmt.Printf("No gitswitch block in %s\n", sshPath)
+	}
+
+	switch installed, _, err := hook.Installed(); {
+	case err != nil:
+		return err
+	case installed:
+		if err := hook.Uninstall(); err != nil {
 			return err
 		}
-		all = append(all, id)
-		if p.Name == store.Active {
-			id := id
-			active = &id
-		}
+		fmt.Println("Removed the pre-push guard and cleared core.hooksPath")
 	}
 
-	var hosts []sshcfg.Host
-	for _, p := range store.List() {
-		if p.SSHKey != "" {
-			hosts = append(hosts, sshcfg.Host{Alias: p.DefaultHostAlias(), Key: p.SSHKey})
-		}
-	}
-	if err := sshcfg.Apply(hosts); err != nil {
-		return fmt.Errorf("updating ~/.ssh/config: %w", err)
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	return gitcfg.WriteBlock(filepath.Join(home, ".gitconfig"), gitcfg.GlobalBlock(active, all))
+	fmt.Println("\nProfiles themselves are untouched. `gsw switch <name>` writes all of this back.")
+	return nil
 }
 
 func gitConfigValue(key string) (string, error) {
 	out, err := exec.Command("git", "config", "--get", key).Output()
 	return strings.TrimSpace(string(out)), err
-}
-
-// expand resolves a leading ~ so flag values can be written the way users type
-// paths in a shell.
-func expand(path string) string {
-	if path == "" {
-		return ""
-	}
-	if path == "~" || strings.HasPrefix(path, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, strings.TrimPrefix(path, "~"))
-		}
-	}
-	if abs, err := filepath.Abs(path); err == nil {
-		return abs
-	}
-	return path
 }

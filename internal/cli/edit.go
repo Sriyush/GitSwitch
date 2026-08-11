@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/sriyush/gitswitch/internal/apply"
 	"github.com/sriyush/gitswitch/internal/profile"
 )
 
@@ -61,7 +62,7 @@ func cmdEdit(args []string) error {
 	}
 
 	var changed []string
-	apply := func(name, old, new string) string {
+	update := func(name, old, new string) string {
 		if !set[name] {
 			return old
 		}
@@ -71,13 +72,13 @@ func cmdEdit(args []string) error {
 		return new
 	}
 
-	p.Username = apply("username", p.Username, *username)
-	p.GitName = apply("name", p.GitName, *gitName)
-	p.GitEmail = apply("email", p.GitEmail, *email)
-	p.SSHKey = apply("ssh-key", p.SSHKey, expand(*sshKey))
-	p.SigningKey = apply("signing-key", p.SigningKey, expand(*signKey))
-	p.SigningFormat = apply("signing-format", p.SigningFormat, *signFmt)
-	p.Root = apply("root", p.Root, expand(*root))
+	p.Username = update("username", p.Username, *username)
+	p.GitName = update("name", p.GitName, *gitName)
+	p.GitEmail = update("email", p.GitEmail, *email)
+	p.SSHKey = update("ssh-key", p.SSHKey, profile.ExpandPath(*sshKey))
+	p.SigningKey = update("signing-key", p.SigningKey, profile.ExpandPath(*signKey))
+	p.SigningFormat = update("signing-format", p.SigningFormat, *signFmt)
+	p.Root = update("root", p.Root, profile.ExpandPath(*root))
 
 	// Clearing the signing key must clear the format too, or Validate rejects a
 	// format with no key behind it.
@@ -105,6 +106,9 @@ func cmdEdit(args []string) error {
 	if err := p.Validate(); err != nil {
 		return err
 	}
+	if err := store.CheckRoot(p.Name, p.Root); err != nil {
+		return err
+	}
 	if len(changed) == 0 {
 		fmt.Printf("No changes to %q.\n", p.Name)
 		return nil
@@ -112,7 +116,7 @@ func cmdEdit(args []string) error {
 	if err := store.Save(); err != nil {
 		return err
 	}
-	if err := applyStore(store); err != nil {
+	if err := apply.Store(store); err != nil {
 		return err
 	}
 

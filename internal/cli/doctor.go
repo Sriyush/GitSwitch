@@ -3,168 +3,67 @@ package cli
 import (
 	"flag"
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 
-	"github.com/sriyush/gitswitch/internal/gitcfg"
+	"github.com/sriyush/gitswitch/internal/checkup"
 	"github.com/sriyush/gitswitch/internal/profile"
-	"github.com/sriyush/gitswitch/internal/sshcfg"
 )
 
-type checkResult struct {
-	ok      bool
-	label   string
-	detail  string
-	remedy  string
-	skipped bool
-}
-
-// cmdDoctor validates the parts of the setup that can be checked locally.
+// cmdDoctor renders the diagnostics from internal/checkup.
 //
-// Live SSH handshakes, token scope/expiry checks, and "is this signing key
-// registered on GitHub" all need network and keyring access, which land with the
-// github and keyring packages. Those checks report as skipped rather than
-// passing, so the output never overstates what was verified.
+// The checks themselves live in that package because the web UI serves the same
+// results; this function only decides how they look in a terminal.
 func cmdDoctor(args []string) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
-	offlineFlag := fs.Bool("offline", false, "skip checks that contact GitHub")
+	offline := fs.Bool("offline", false, "skip checks that contact GitHub")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	offline := *offlineFlag
 
 	store, err := profile.Load()
 	if err != nil {
 		return err
 	}
-	list := store.List()
-	if len(list) == 0 {
+	if len(store.List()) == 0 {
 		fmt.Println("No profiles configured. Run `gsw add <name> --username <login> --email <email>`.")
 		return nil
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-	dir, err := profile.ConfigDir()
+	res, err := checkup.Run(store, *offline)
 	if err != nil {
 		return err
 	}
 
-	var failed int
-	for _, p := range list {
-		fmt.Printf("\n%s (%s)\n", p.Name, p.Username)
-
-		var checks []checkResult
-		checks = append(checks, checkFile(
-			"commit identity fragment",
-			filepath.Join(dir, "profiles", p.Name+".gitconfig"),
-			"run `gsw switch "+p.Name+"` to regenerate",
-		))
-
-		if p.SSHKey == "" {
-			checks = append(checks, checkResult{
-				label:  "ssh key",
-				detail: "not configured",
-				remedy: "gsw edit " + p.Name + " --ssh-key ~/.ssh/id_ed25519",
-			})
-		} else {
-			checks = append(checks, checkFile("ssh key", p.SSHKey, "generate one with `ssh-keygen -t ed25519`"))
-		}
-
-		if p.Root != "" {
-			checks = append(checks, checkDir("scoped root", p.Root, "create it or clear it with `gsw edit "+p.Name+" --root \"\"`"))
-		}
-
-		// The handshake is the check that actually matters: it proves GitHub
-		// resolves this profile's key to the account the profile claims.
-		if p.SSHKey == "" {
-			checks = append(checks, checkResult{label: "ssh handshake", skipped: true, detail: "no key configured"})
-		} else if offline {
-			checks = append(checks, checkResult{label: "ssh handshake", skipped: true, detail: "skipped (--offline)"})
-		} else {
-			alias := p.DefaultHostAlias()
-			switch login, err := sshcfg.Verify(alias); {
-			case err != nil:
-				checks = append(checks, checkResult{
-					label:  "ssh handshake",
-					detail: fmt.Sprintf("%s: %v", alias, err),
-					remedy: "add the public key at https://github.com/settings/keys for " + p.Username,
-				})
-			case !strings.EqualFold(login, p.Username):
-				checks = append(checks, checkResult{
-					label:  "ssh handshake",
-					detail: fmt.Sprintf("%s authenticates as %q, expected %q", alias, login, p.Username),
-					remedy: "this key belongs to a different account; generate a separate key for " + p.Username,
-				})
-			default:
-				checks = append(checks, checkResult{ok: true, label: "ssh handshake", detail: "authenticated as " + login})
-			}
-		}
-
-		checks = append(checks,
-			checkResult{label: "token validity", skipped: true, detail: "needs internal/keyring"},
-			checkResult{label: "signing key on GitHub", skipped: true, detail: "needs internal/github"},
-		)
-
-		for _, c := range checks {
-			switch {
-			case c.skipped:
-				fmt.Printf("  ~ %-24s %s\n", c.label, c.detail)
-			case c.ok:
-				fmt.Printf("  + %-24s %s\n", c.label, c.detail)
-			default:
-				failed++
-				fmt.Printf("  x %-24s %s\n", c.label, c.detail)
-				if c.remedy != "" {
-					fmt.Printf("    -> %s\n", c.remedy)
-				}
-			}
+	for _, rep := range res.Profiles {
+		fmt.Printf("\n%s (%s)\n", rep.Profile, rep.Username)
+		for _, c := range rep.Checks {
+			printCheck("  ", c)
 		}
 	}
 
 	fmt.Println()
-	if _, ok, err := gitcfg.Block(filepath.Join(home, ".gitconfig")); err != nil {
-		return err
-	} else if !ok {
-		failed++
-		fmt.Println("x ~/.gitconfig has no gitswitch block")
-		fmt.Println("  -> run `gsw switch <profile>` to write it")
-	} else {
-		fmt.Println("+ ~/.gitconfig contains the gitswitch block")
+	for _, c := range res.Global {
+		printCheck("", c)
 	}
 
-	if failed > 0 {
-		return fmt.Errorf("%d check(s) failed", failed)
+	if res.Failed > 0 {
+		return fmt.Errorf("%d check(s) failed", res.Failed)
 	}
 	fmt.Println("\nAll local checks passed.")
 	return nil
 }
 
-func checkFile(label, path, remedy string) checkResult {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return checkResult{label: label, detail: "missing: " + path, remedy: remedy}
+// printCheck renders one check. Skipped checks use a distinct marker so they
+// cannot be misread as passing.
+func printCheck(indent string, c checkup.Check) {
+	switch c.Status {
+	case checkup.StatusSkip:
+		fmt.Printf("%s~ %-24s %s\n", indent, c.Label, c.Detail)
+	case checkup.StatusPass:
+		fmt.Printf("%s+ %-24s %s\n", indent, c.Label, c.Detail)
+	default:
+		fmt.Printf("%sx %-24s %s\n", indent, c.Label, c.Detail)
+		if c.Remedy != "" {
+			fmt.Printf("%s  -> %s\n", indent, c.Remedy)
+		}
 	}
-	if fi.IsDir() {
-		return checkResult{label: label, detail: "expected a file: " + path, remedy: remedy}
-	}
-	return checkResult{ok: true, label: label, detail: path}
-}
-
-func checkDir(label, path, remedy string) checkResult {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return checkResult{label: label, detail: "missing: " + path, remedy: remedy}
-	}
-	if !fi.IsDir() {
-		return checkResult{label: label, detail: "not a directory: " + path, remedy: remedy}
-	}
-	return checkResult{ok: true, label: label, detail: path}
-}
-
-func cmdUI(args []string) error {
-	return fmt.Errorf("not implemented yet - internal/server and web/ are scaffolded but empty")
 }
