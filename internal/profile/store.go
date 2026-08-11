@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // ErrNotFound is returned when a named profile does not exist.
@@ -138,6 +139,64 @@ func (s *Store) List() []*Profile {
 	return out
 }
 
+// RootConflictError reports a root directory that overlaps another profile's.
+// It carries the explanation as well as the fact, so the CLI and the management
+// server reject the same input for the same stated reason.
+type RootConflictError struct {
+	Root  string
+	Other *Profile
+}
+
+func (e *RootConflictError) Error() string {
+	return fmt.Sprintf("root %s overlaps profile %q (%s)\n"+
+		"  Git applies the last matching includeIf rule, so with nested roots the winning\n"+
+		"  identity depends on config order rather than on anything you can see. Choose\n"+
+		"  directories that do not contain each other, or clear the other scope with:\n"+
+		"    gsw edit %s --root \"\"",
+		e.Root, e.Other.Name, e.Other.Root, e.Other.Name)
+}
+
+// CheckRoot rejects a root that overlaps another profile's. self names the
+// profile being written, so an edit does not conflict with itself.
+func (s *Store) CheckRoot(self, root string) error {
+	if other, conflict := s.RootConflict(self, root); conflict {
+		return &RootConflictError{Root: root, Other: other}
+	}
+	return nil
+}
+
+// RootConflict reports whether root overlaps the directory owned by another
+// profile. The self argument names the profile being written, so `gsw edit` can
+// leave its own root in place without conflicting with itself.
+//
+// Overlap is rejected rather than ordered. Git applies includeIf rules in file
+// order and the last match wins, so with nested roots the winner is decided by
+// store iteration order — invisible to the user and impossible to reason about.
+// Refusing up front is the only honest option.
+func (s *Store) RootConflict(self, root string) (*Profile, bool) {
+	if root == "" {
+		return nil, false
+	}
+	a := normalizeRoot(root)
+	for _, p := range s.List() {
+		if p.Name == self || p.Root == "" {
+			continue
+		}
+		b := normalizeRoot(p.Root)
+		if strings.HasPrefix(a, b) || strings.HasPrefix(b, a) {
+			return p, true
+		}
+	}
+	return nil, false
+}
+
+// normalizeRoot appends a trailing slash so prefix comparison cannot match a
+// sibling directory: without it "/home/me/work" appears to contain
+// "/home/me/work2". This mirrors how gitcfg renders the includeIf path.
+func normalizeRoot(p string) string {
+	return strings.TrimSuffix(filepath.Clean(p), "/") + "/"
+}
+
 // ActiveProfile returns the currently active profile, if any.
 func (s *Store) ActiveProfile() (*Profile, bool) {
 	if s.Active == "" {
@@ -149,16 +208,21 @@ func (s *Store) ActiveProfile() (*Profile, bool) {
 
 // ResolveOwner finds the profile that owns a GitHub org/user, which is how
 // `gsw clone acme/api` picks an identity without being told.
+//
+// Matching is case-insensitive because GitHub owners are: github.com/Acme and
+// github.com/acme are the same account. A case-sensitive compare here does not
+// merely inconvenience `gsw clone` — it makes the pre-push guard skip a repo it
+// should have judged, and a guard that silently passes is worse than none.
 func (s *Store) ResolveOwner(owner string) (*Profile, bool) {
 	for _, p := range s.List() {
 		for _, o := range p.Orgs {
-			if o == owner {
+			if strings.EqualFold(o, owner) {
 				return p, true
 			}
 		}
 	}
 	for _, p := range s.List() {
-		if p.Username == owner {
+		if strings.EqualFold(p.Username, owner) {
 			return p, true
 		}
 	}

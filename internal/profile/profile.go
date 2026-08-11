@@ -4,7 +4,10 @@ package profile
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 )
 
 // Profile is one GitHub account identity, spanning all four layers that git
@@ -65,6 +68,26 @@ func (p *Profile) Validate() error {
 		return fmt.Errorf("profile %q: signing_format must be \"ssh\" or \"openpgp\", got %q", p.Name, p.SigningFormat)
 	}
 	return nil
+}
+
+// ExpandPath resolves a leading ~ and makes the path absolute.
+//
+// It lives here rather than in the CLI because paths arrive from two directions
+// — flags typed in a shell and JSON posted by the web UI — and both end up in
+// config files that git and ssh read literally, with no shell to expand them.
+func ExpandPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, strings.TrimPrefix(path, "~"))
+		}
+	}
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 // DefaultHostAlias is the ~/.ssh/config Host used when none is set explicitly.
