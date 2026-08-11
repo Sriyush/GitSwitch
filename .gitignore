@@ -8,6 +8,11 @@ web/dist/
 web/.vite/
 *.local
 
+# The landing page is its own repository (AxonStack/GitSwtich-Landing) that
+# happens to be checked out here. Committing it would bury a gitlink to a
+# repo this one knows nothing about.
+site/
+
 # Never commit anything that could carry a token
 *.env
 .env*
