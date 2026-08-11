@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gitswitch</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">gs</span>
+      <span class="brand-name">gitswitch</span>
+    </div>
+
+    <nav id="tabs" role="tablist" aria-label="Sections"></nav>
+
+    <div class="sidebar-foot">
+      <p class="eyebrow">Committing as</p>
+      <div id="active-line" class="identity"></div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="banner" class="banner" role="status" aria-live="polite" hidden></div>
+    <section id="view"></section>
+    <footer>
+      Local management server, bound to <code>127.0.0.1</code> only. Close this tab
+      and the session token dies with the process.
+    </footer>
+  </main>
+
+</div>
+<script type="module" src="main.js"></script>
+</body>
+</html>
